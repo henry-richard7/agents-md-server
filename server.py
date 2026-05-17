@@ -57,7 +57,7 @@ SYSTEM_PROMPT = build_system_prompt()
 # ── FastMCP server ─────────────────────────────────────────────────────────
 # Pass instructions= so compliant clients (Claude Desktop etc.) get it.
 # LM Studio may ignore this — see get_skills tool below as fallback.
-mcp = FastMCP("skilldeck", instructions=SYSTEM_PROMPT)
+mcp = FastMCP("skilldeck")
 
 
 # ── Fallback: expose skills via tool description ───────────────────────────
