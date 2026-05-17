@@ -4,106 +4,144 @@ description: Fetches real-time Azure retail pricing using the Azure Retail Price
 compatibility: Requires internet access to prices.azure.com. No authentication needed.
 metadata:
   author: anthonychu
-  version: "1.0"
+  version: "3.0"
 ---
 
 # Azure Pricing Skill
 
-Use this skill to retrieve real-time Azure retail pricing data from the public Azure Retail Prices API. No authentication is required.
+Use this skill to retrieve real-time Azure retail pricing from the public Azure Retail Prices API. No authentication required.
 
-## API Endpoint
+## CRITICAL: How to call http_fetch
 
-```
-GET https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview
-```
+NEVER put the filter inside the URL string. ALWAYS pass it as `query_params`.
+This is required so the HTTP client encodes it correctly.
 
-Append `$filter` as a query parameter using OData filter syntax. Always use `api-version=2023-01-01-preview` to ensure savings plan data is included.
-
-## Step-by-step Instructions
-
-If anything is unclear about the user's request, ask clarifying questions to identify the correct filter fields and values before calling the API.
-
-1. **Identify filter fields** from the user's request (service name, region, SKU, price type).
-2. **Resolve the region**: the API requires `armRegionName` values in lowercase with no spaces (e.g. "East US" → `eastus`, "West Europe" → `westeurope`, "Southeast Asia" → `southeastasia`). Derive this from the user's input.
-3. **Build the filter string** using the fields below and fetch the URL.
-4. **Parse the `Items` array** from the JSON response. Each item contains price and metadata.
-5. **Follow pagination** via `NextPageLink` if you need more than the first 1000 results (rarely needed).
-6. **ALWAYS pass unit prices** to the `cost_estimator` tool to produce monthly/annual estimates.
-
-## Filterable Fields
-
-| Field | Type | Example |
-|---|---|---|
-| `serviceName` | string (exact, case-sensitive) | `'Azure Functions'`, `'Virtual Machines'`, `'Azure Blob Storage'` |
-| `serviceFamily` | string (exact, case-sensitive) | `'Compute'`, `'Storage'`, `'Databases'`, `'AI + Machine Learning'` |
-| `armRegionName` | string (exact, lowercase) | `'eastus'`, `'westeurope'`, `'southeastasia'` |
-| `armSkuName` | string (exact) | `'Standard_D4s_v5'`, `'Standard_LRS'` |
-| `skuName` | string (contains supported) | `'D4s v5'` |
-| `priceType` | string | `'Consumption'`, `'Reservation'`, `'DevTestConsumption'` |
-| `meterName` | string (contains supported) | `'Spot'` |
-
-Use `eq` for equality, `and` to combine, and `contains(field, 'value')` for partial matches.
-
-## Example Filter Strings
-
-```
-# All consumption prices for Azure Functions in East US
-serviceName eq 'Azure Functions' and armRegionName eq 'eastus' and priceType eq 'Consumption'
-
-# D4s v5 VMs in West Europe (consumption only)
-armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'westeurope' and priceType eq 'Consumption'
-
-# All storage prices in a region
-serviceFamily eq 'Storage' and armRegionName eq 'eastus'
-
-# Spot pricing for a specific SKU
-armSkuName eq 'Standard_D4s_v5' and contains(meterName, 'Spot') and armRegionName eq 'eastus'
-
-# 1-year reservation pricing
-serviceName eq 'Virtual Machines' and priceType eq 'Reservation' and armRegionName eq 'eastus'
-```
-
-## Full Example Fetch URL
-
-```
-https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=serviceName eq 'Azure Functions' and armRegionName eq 'eastus' and priceType eq 'Consumption'
-```
-
-URL-encode spaces as `%20` and quotes as `%27` when constructing the URL.
-
-## Key Response Fields
-
+Correct call structure:
 ```json
 {
-  "Items": [
-    {
-      "retailPrice": 0.000016,
-      "unitPrice": 0.000016,
-      "currencyCode": "USD",
-      "unitOfMeasure": "1 Execution",
-      "serviceName": "Azure Functions",
-      "skuName": "Consumption Tier",
-      "armRegionName": "eastus",
-      "meterName": "Standard Executions",
-      "productName": "Azure Functions",
-      "priceType": "Consumption",
-      "isPrimaryMeterRegion": true
-    }
-  ],
-  "NextPageLink": null,
-  "Count": 1
+  "method": "GET",
+  "url": "https://prices.azure.com/api/retail/prices",
+  "query_params": {
+    "api-version": "2023-01-01-preview",
+    "$filter": "<your filter string here>"
+  }
 }
 ```
 
-Only use items where `isPrimaryMeterRegion` is `true` unless the user specifically asks for non-primary meters.
+Wrong (do NOT do this):
+```
+url: "https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=..."
+```
 
-## Supported serviceFamily Values
+## Step-by-step Instructions
 
-`Analytics`, `Compute`, `Containers`, `Data`, `Databases`, `Developer Tools`, `Integration`, `Internet of Things`, `Management and Governance`, `Networking`, `Security`, `Storage`, `Web`, `AI + Machine Learning`
+Follow these steps in order. Do not skip any step.
+
+### Step 1 — Resolve the region
+
+Convert the user's region to `armRegionName` format (lowercase, no spaces):
+
+| User says | Use in filter |
+|---|---|
+| East US | `eastus` |
+| West US | `westus` |
+| West US 2 | `westus2` |
+| West Europe | `westeurope` |
+| North Europe | `northeurope` |
+| Southeast Asia | `southeastasia` |
+| UK South | `uksouth` |
+| Australia East | `australiaeast` |
+| Central India | `centralindia` |
+
+### Step 2 — Build the filter string
+
+Default to Linux and Consumption unless the user specifies otherwise.
+
+**Linux VM (default):**
+```
+serviceName eq 'Virtual Machines' and armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'eastus' and priceType eq 'Consumption'
+```
+
+**Windows VM:**
+```
+serviceName eq 'Virtual Machines' and armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'eastus' and priceType eq 'Consumption'
+```
+Note: Windows and Linux share the same `armSkuName`. After fetching, filter the `Items` array to only items where `meterName` contains `'Windows'` for Windows pricing, or does NOT contain `'Windows'` for Linux pricing.
+
+**Spot pricing:**
+```
+serviceName eq 'Virtual Machines' and armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'eastus' and contains(meterName, 'Spot')
+```
+
+**1-year Reservation:**
+```
+serviceName eq 'Virtual Machines' and armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'eastus' and priceType eq 'Reservation'
+```
+
+Substitute `Standard_D4s_v5` and `eastus` with the actual SKU and region from the user's request.
+
+### Step 3 — Call http_fetch
+
+Use this EXACT structure. Pass `query_params` as a separate dict — never embed the filter in the URL.
+
+Example for Standard_D4s_v5 Linux in East US:
+```json
+{
+  "method": "GET",
+  "url": "https://prices.azure.com/api/retail/prices",
+  "query_params": {
+    "api-version": "2023-01-01-preview",
+    "$filter": "serviceName eq 'Virtual Machines' and armSkuName eq 'Standard_D4s_v5' and armRegionName eq 'eastus' and priceType eq 'Consumption'"
+  }
+}
+```
+
+### Step 4 — Parse the response
+
+From the `Items` array in the response:
+- Only use items where `isPrimaryMeterRegion` is `true`
+- Verify `armRegionName` matches the requested region exactly
+- Verify `armSkuName` matches the requested SKU exactly
+- **Linux pricing**: use items where `meterName` does NOT contain `Windows`
+- **Windows pricing**: use items where `meterName` CONTAINS `Windows`
+
+The same API call returns both Linux and Windows meters — you distinguish them purely by `meterName`.
+
+Extract from the matching item:
+| Field | Use for |
+|---|---|
+| `retailPrice` | unit_price in cost_estimator |
+| `unitOfMeasure` | unit_of_measure in cost_estimator |
+| `skuName` | label in cost_estimator |
+| `meterName` | confirm pricing type |
+
+If no items match after filtering, try broadening — remove `priceType` from the filter and retry.
+
+### Step 5 — ALWAYS call cost_estimator immediately
+
+Do NOT ask the user for usage hours. Default to 730 hours/month (24/7).
+
+```json
+{
+  "unit_price": <retailPrice from Step 4>,
+  "unit_of_measure": "1 Hour",
+  "quantity": 730,
+  "label": "Standard_D4s_v5 - East US - Linux - On-Demand"
+}
+```
+
+### Step 6 — Present results
+
+Show in this order:
+1. Hourly price
+2. Monthly estimate (730 hrs)
+3. Annual estimate
+4. OS and pricing tier used
+5. Offer to also fetch Spot or Reservation pricing if the user wants a cheaper option
 
 ## Tips
 
-- `serviceName` values are case-sensitive. When unsure, filter by `serviceFamily` first to discover valid `serviceName` values in the results.
-- If results are empty, try broadening the filter (e.g., remove `priceType` or region constraints first).
-- Prices are always in USD unless `currencyCode` is specified in the request.
-- For savings plan prices, look for the `savingsPlan` array on each item (only in `2023-01-01-preview`).
+- `serviceName` is case-sensitive. Use `'Virtual Machines'` not `'virtual machines'`.
+- If results are empty, remove `priceType` from the filter first and retry.
+- Prices are always in USD.
+- Never guess or estimate prices — always fetch from the API.
