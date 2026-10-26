@@ -242,6 +242,8 @@ uv run ruff check
 
 ## Extending Capabilities
 
+> 📖 **Comprehensive Guide:** See [USAGE.md](file:///G:/Codings/Python/agents-md-server/USAGE.md) for detailed tutorials, code patterns, and testing instructions for skills and custom tools.
+
 ### Adding a Skill
 1. Create a directory: `skills/<skill_name>/`
 2. Add `SKILL.md` with YAML frontmatter:
