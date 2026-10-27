@@ -42,3 +42,49 @@ async def test_http_client_manager_lifecycle():
     assert not client.is_closed
     await HttpClientManager.close()
     assert HttpClientManager._client is None
+
+
+def test_resolve_url_placeholders(monkeypatch):
+    from agents_md_server.http_client import resolve_url_placeholders
+
+    monkeypatch.setenv("MY_HOST", "dbc-1234.cloud.databricks.com")
+    monkeypatch.setenv("MY_FULL_URL", "https://api.example.com")
+
+    # ${VAR} syntax
+    assert (
+        resolve_url_placeholders("${MY_HOST}/api/2.0/jobs")
+        == "https://dbc-1234.cloud.databricks.com/api/2.0/jobs"
+    )
+    assert (
+        resolve_url_placeholders("https://${MY_HOST}/api/2.0/jobs")
+        == "https://dbc-1234.cloud.databricks.com/api/2.0/jobs"
+    )
+
+    # {VAR} uppercase syntax
+    assert (
+        resolve_url_placeholders("{MY_FULL_URL}/v1/data")
+        == "https://api.example.com/v1/data"
+    )
+
+    # Double https:// cleanup
+    assert (
+        resolve_url_placeholders("https://${MY_FULL_URL}/v1/data")
+        == "https://api.example.com/v1/data"
+    )
+
+    # Relative path with base_url
+    assert (
+        resolve_url_placeholders("/v1/items", base_url="https://api.example.com")
+        == "https://api.example.com/v1/items"
+    )
+
+    # Missing ${VAR} raises ValueError
+    with pytest.raises(ValueError, match="is not set or empty"):
+        resolve_url_placeholders("${NON_EXISTENT_HOST_123}/api")
+
+    # Lowercase path params left intact
+    assert (
+        resolve_url_placeholders("https://example.com/jobs/{job_id}")
+        == "https://example.com/jobs/{job_id}"
+    )
+

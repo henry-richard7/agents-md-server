@@ -121,6 +121,7 @@ def register(mcp: FastMCP) -> None:
             "api_key_query",
         ] = "bearer",
         env_key: str | None = None,
+        env_base_url: str | None = None,
         env_client_id: str | None = None,
         env_client_secret: str | None = None,
         env_username: str | None = None,
@@ -132,6 +133,7 @@ def register(mcp: FastMCP) -> None:
         extra_headers: dict[str, str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
+
         """Make an authenticated HTTP request using credentials stored in environment variables.
 
         Credentials are read from server-side environment variables — never pass actual secrets.
@@ -146,10 +148,15 @@ def register(mcp: FastMCP) -> None:
         headers: dict[str, str] = {}
         params: dict[str, Any] = dict(query_params or {})
 
+        base_url: str | None = None
         try:
+            if env_base_url:
+                base_url = _resolve_env(env_base_url, "env_base_url")
+
             if auth_type == "bearer":
                 token = _resolve_env(env_key, "env_key")
                 headers["Authorization"] = f"Bearer {token}"
+
 
             elif auth_type == "api_key_header":
                 key = _resolve_env(env_key, "env_key")
@@ -206,5 +213,7 @@ def register(mcp: FastMCP) -> None:
             params=params,
             json_body=body,
             headers=headers,
+            base_url=base_url,
         )
+
 

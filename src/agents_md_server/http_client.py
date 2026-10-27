@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
+import re
 import socket
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
-from agents_md_server.config import settings
+from agents_md_server.config import PROJECT_ROOT, settings
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +127,66 @@ class HttpClientManager:
             logger.debug("HTTP client connection pool closed.")
 
 
+def resolve_env_var(name: str) -> str | None:
+    """Retrieve an environment variable from os.environ or directly from .env file."""
+    val = os.getenv(name)
+    if val:
+        return val.strip()
+
+    from dotenv import dotenv_values
+
+    env_path = PROJECT_ROOT / ".env"
+    if env_path.exists():
+        env_vars = dotenv_values(env_path)
+        raw = env_vars.get(name)
+        if raw:
+            os.environ[name] = raw
+            return raw.strip()
+    return None
+
+
+def resolve_url_placeholders(url: str, base_url: str | None = None) -> str:
+    """Resolve environment variable placeholders in URL and join with optional base_url.
+
+    Supports:
+    - ${ENV_VAR} syntax: e.g. "https://${DATABRICKS_HOST}/api/..." or "${DATABRICKS_HOST}/api/..."
+    - {ENV_VAR} syntax for uppercase env vars: e.g. "{DATABRICKS_HOST}/api/..."
+    - base_url prepending if url is a relative path (e.g. "/api/...")
+    """
+    if base_url:
+        base = base_url.rstrip("/")
+        if not base.startswith(("http://", "https://")):
+            base = f"https://{base}"
+        if not url.startswith(("http://", "https://", "${", "{")):
+            url = f"{base}/{url.lstrip('/')}"
+
+    def _replace_var(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        val = resolve_env_var(var_name)
+        if val is not None:
+            return val.rstrip("/")
+        if match.group(0).startswith("${"):
+            raise ValueError(
+                f"Environment variable '{var_name}' referenced in URL is not set or empty in .env"
+            )
+        return match.group(0)
+
+    # 1. Replace ${VAR_NAME}
+    url = re.sub(r"\$\{([A-Za-z0-9_]+)\}", _replace_var, url)
+
+    # 2. Replace {VAR_NAME} (uppercase env vars)
+    url = re.sub(r"\{([A-Z0-9_]+)\}", _replace_var, url)
+
+    # Clean double scheme if both URL and env var specified https://
+    url = re.sub(r"^https?://https?://", "https://", url)
+
+    # Ensure http:// or https:// scheme if bare domain was injected
+    if not url.startswith(("http://", "https://")) and not url.startswith("/"):
+        url = f"https://{url}"
+
+    return url
+
+
 async def execute_http_request(
     url: str,
     method: str = "GET",
@@ -132,6 +194,7 @@ async def execute_http_request(
     json_body: Any = None,
     headers: dict[str, str] | None = None,
     allow_private_networks: bool | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """Validate URL, perform HTTP request using shared connection pool, and format response.
 
@@ -139,9 +202,11 @@ async def execute_http_request(
         Structured response dictionary containing status, headers, and parsed content or error.
     """
     try:
-        validated_url = validate_url(url, allow_private_networks=allow_private_networks)
+        resolved_url = resolve_url_placeholders(url, base_url=base_url)
+        validated_url = validate_url(resolved_url, allow_private_networks=allow_private_networks)
     except (ValueError, SecurityError) as e:
         return {"error": f"Security / Validation error: {e!s}", "status_code": 400}
+
 
     client = HttpClientManager.get_client()
 
