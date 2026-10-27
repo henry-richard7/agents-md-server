@@ -33,11 +33,25 @@ def _resolve_env(env_var_name: str | None, param_name: str) -> str:
         )
     value = os.getenv(env_var_name)
     if not value:
+        # Fallback to reading directly from .env file if updated dynamically
+        from dotenv import dotenv_values
+
+        from agents_md_server.config import PROJECT_ROOT
+
+        env_path = PROJECT_ROOT / ".env"
+        if env_path.exists():
+            env_vars = dotenv_values(env_path)
+            value = env_vars.get(env_var_name)
+            if value:
+                os.environ[env_var_name] = value
+
+    if not value:
         raise ValueError(
             f"Environment variable '{env_var_name}' is not set or empty. "
             f"Please configure it in your server's .env file."
         )
     return value.strip()
+
 
 
 async def _get_oauth2_token(
@@ -98,6 +112,7 @@ def register(mcp: FastMCP) -> None:
     async def auth_http_fetch(
         url: str,
         method: str = "GET",
+        http_method: str | None = None,
         auth_type: Literal[
             "bearer",
             "api_key_header",
@@ -181,13 +196,15 @@ def register(mcp: FastMCP) -> None:
         if extra_headers and auth_type != "api_key_header":
             headers.update(extra_headers)
 
+        effective_method = (http_method or method).upper()
         if ctx:
-            await ctx.info(f"Executing authenticated HTTP {method.upper()} to {url} ({auth_type})")
+            await ctx.info(f"Executing authenticated HTTP {effective_method} to {url} ({auth_type})")
 
         return await execute_http_request(
             url=url,
-            method=method,
+            method=effective_method,
             params=params,
             json_body=body,
             headers=headers,
         )
+

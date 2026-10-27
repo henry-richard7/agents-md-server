@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,6 +20,10 @@ def _find_project_root() -> Path:
 
 
 PROJECT_ROOT = _find_project_root()
+
+# Load .env file into os.environ so server-side secrets are available
+load_dotenv(PROJECT_ROOT / ".env")
+
 
 
 class Settings(BaseSettings):
