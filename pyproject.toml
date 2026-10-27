@@ -7,6 +7,7 @@ name = "agents-md-server"
 version = "0.1.0"
 description = "Production-ready Model Context Protocol (MCP) server for dynamic skilldeck agents"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
     "fastmcp>=3.3.1",

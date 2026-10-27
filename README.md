@@ -263,4 +263,5 @@ The container runs as a non-root user and includes an automated healthcheck at `
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
