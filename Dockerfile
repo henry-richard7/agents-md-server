@@ -9,15 +9,17 @@ WORKDIR /app
 # Enable bytecode compilation and copy link mode for build speed
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
-# Install dependencies with cache mounting
+# Copy dependency manifests first for Docker layer caching
+COPY pyproject.toml uv.lock README.md /app/
+
+# Install dependencies into virtualenv (cached until manifests change)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-project --no-dev
 
-# Copy source code and install project into virtualenv
+# Copy application source
 COPY src/ /app/src/
-COPY pyproject.toml README.md /app/
+
+# Install project package into virtualenv
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
