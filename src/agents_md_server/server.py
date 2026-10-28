@@ -53,6 +53,36 @@ class SkillsState:
         return self.skills
 
 
+def _build_get_skills_description(skills: dict[str, Skill], preload_all: bool) -> str:
+    """Generate the description for get_skills tool based on preload mode and available skills."""
+    if preload_all:
+        base = (
+            "Inspect and retrieve API documentation and instructions for a specific skill. "
+            "Note: All skill runbooks are already preloaded in your system prompt, so calling this tool is optional."
+        )
+    else:
+        base = (
+            "Inspect and retrieve full API documentation, endpoints, and instructions for a specific skill. "
+            "Call this tool with `skill_name` to load a skill's runbook before calling http_fetch or auth_http_fetch."
+        )
+
+    if not skills:
+        summary = "No skills currently loaded."
+    else:
+        items = [f"- {name}: {s.description}" for name, s in skills.items()]
+        summary = "Available skills:\n" + "\n".join(items)
+
+    return f"{base}\n\n{summary}"
+
+
+def _sync_get_skills_description(mcp: FastMCP, skills: dict[str, Skill], preload_all: bool) -> None:
+    """Update get_skills tool description in-place in FastMCP component registry."""
+    new_desc = _build_get_skills_description(skills, preload_all)
+    for key, comp in getattr(mcp.local_provider, "_components", {}).items():
+        if key.startswith("tool:get_skills"):
+            comp.description = new_desc
+
+
 def create_server(app_settings: Settings | None = None) -> FastMCP:
     """Factory function to build and configure the FastMCP server instance."""
     cfg = app_settings or default_settings
@@ -140,38 +170,37 @@ def create_server(app_settings: Settings | None = None) -> FastMCP:
         return f"Skill '{skill_name}' not found. Available skills: {available}"
 
     # 6. Fallback tool: get_skills (optimized for LM Studio and models without resource injection)
-    def _build_skill_descriptions_summary() -> str:
-        if not skills_state.skills:
-            return "No skills currently loaded."
-        items = [f"- {name}: {s.description}" for name, s in skills_state.skills.items()]
-        return "Available skills:\n" + "\n".join(items)
-
     @mcp.tool(
-        description=(
-            "Inspect and retrieve full API documentation, endpoints, and instructions for a specific skill. "
-            "ALWAYS call this tool first before calling http_fetch or auth_http_fetch for any available skill.\n\n"
-            + _build_skill_descriptions_summary()
-        )
+        description=_build_get_skills_description(skills_state.skills, cfg.preload_all_skills)
     )
     def get_skills(skill_name: str | None = None) -> str:
-        """Retrieve loaded skill instructions.
+        """Retrieve loaded skill instructions or view available skills.
 
         Args:
-            skill_name: Name of a specific skill to fetch (e.g. 'azure-pricing').
-                        If omitted, returns all loaded skills.
+            skill_name: Optional name of a specific skill to fetch (e.g. 'salesforce', 'azure-pricing').
+                        If omitted or None, returns a compact index of all available skills.
         """
         if not skills_state.skills:
             return "No skills are currently loaded."
 
-        if skill_name:
-            if skill_name in skills_state.skills:
-                return f"## Skill: {skill_name}\n\n{skills_state.skills[skill_name].raw_content}"
+        if skill_name and skill_name.strip():
+            name = skill_name.strip()
+            if name in skills_state.skills:
+                return f"## Skill: {name}\n\n{skills_state.skills[name].raw_content}"
             available = ", ".join(skills_state.skills.keys())
-            return f"Skill '{skill_name}' not found. Available skills: {available}"
+            return f"Skill '{name}' not found. Available skills: {available}"
 
-        # Return all skills
-        parts = [f"## Skill: {name}\n\n{s.raw_content}" for name, s in skills_state.skills.items()]
-        return "\n\n---\n\n".join(parts)
+        # Return compact summary catalog of available skills — do NOT dump raw content
+        items = []
+        for name, s in skills_state.skills.items():
+            compat = f" ({s.compatibility})" if s.compatibility else ""
+            items.append(f"- **{name}**: {s.description}{compat}")
+
+        return (
+            "Available skills:\n"
+            + "\n".join(items)
+            + "\n\nTo view full instructions and endpoints for a skill, call `get_skills(skill_name='<name>')`."
+        )
 
     @mcp.tool(
         description="Reload all skills from disk and update the active system prompt and skill catalog."
@@ -179,6 +208,8 @@ def create_server(app_settings: Settings | None = None) -> FastMCP:
     def reload_skills() -> str:
         """Reload all skills from disk and rebuild system prompt without server restart."""
         reloaded = skills_state.reload()
+        mcp.instructions = skills_state.system_prompt
+        _sync_get_skills_description(mcp, reloaded, skills_state.preload_all)
         names = ", ".join(reloaded.keys()) if reloaded else "none"
         return f"Successfully reloaded {len(reloaded)} skills: {names}"
 

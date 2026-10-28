@@ -76,15 +76,86 @@ async def test_get_skills_tool():
     mcp = create_server()
     tool = await mcp.get_tool("get_skills")
 
-    # Get all skills
+    # Get all skills without argument returns catalog summary, not full bodies
     all_skills = tool.fn()
+    assert "Available skills:" in all_skills
     assert "azure-pricing" in all_skills
     assert "get-ip-address" in all_skills
+    # Must NOT dump full raw markdown body when no skill_name provided (lean mode preservation)
+    assert "CRITICAL: How to call http_fetch" not in all_skills
 
-    # Get specific skill
+    # Get specific skill returns full runbook
     azure_skill = tool.fn(skill_name="azure-pricing")
     assert "Azure Pricing Skill" in azure_skill
+    assert "CRITICAL: How to call http_fetch" in azure_skill
 
     # Unknown skill
     missing = tool.fn(skill_name="unknown-skill-xyz")
     assert "not found" in missing
+
+
+@pytest.mark.asyncio
+async def test_get_skills_description_preload_mode():
+    from agents_md_server.config import Settings
+
+    # When preload_all is False, description indicates tool should be called
+    mcp_lean = create_server(Settings(preload_all_skills=False))
+    tool_lean = await mcp_lean.get_tool("get_skills")
+    assert "Call this tool with `skill_name`" in tool_lean.description
+    assert "ALWAYS call this tool first" not in tool_lean.description
+
+    # When preload_all is True, description indicates calling it is optional
+    mcp_preload = create_server(Settings(preload_all_skills=True))
+    tool_preload = await mcp_preload.get_tool("get_skills")
+    assert "already preloaded" in tool_preload.description
+    assert "ALWAYS call this tool first" not in tool_preload.description
+
+
+@pytest.mark.asyncio
+async def test_reload_skills_updates_tool_description(tmp_path: Path):
+    from agents_md_server.config import Settings
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    agents_md = tmp_path / "AGENTS.md"
+    agents_md.write_text("# Base Agent", encoding="utf-8")
+
+    # Skill 1
+    s1 = skills_dir / "alpha"
+    s1.mkdir()
+    (s1 / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: Alpha skill\n---\nAlpha body",
+        encoding="utf-8",
+    )
+
+    settings = Settings(
+        skills_dir=skills_dir,
+        agents_md_path=agents_md,
+        preload_all_skills=False,
+    )
+    mcp = create_server(settings)
+
+    tool = await mcp.get_tool("get_skills")
+    assert "alpha: Alpha skill" in tool.description
+    assert "beta: Beta skill" not in tool.description
+
+    # Add Skill 2 on disk
+    s2 = skills_dir / "beta"
+    s2.mkdir()
+    (s2 / "SKILL.md").write_text(
+        "---\nname: beta\ndescription: Beta skill\n---\nBeta body",
+        encoding="utf-8",
+    )
+
+    # Call reload_skills
+    reload_tool = await mcp.get_tool("reload_skills")
+    reload_result = reload_tool.fn()
+    assert "alpha" in reload_result
+    assert "beta" in reload_result
+
+    # Verify tool description on get_skills was refreshed dynamically
+    updated_tool = await mcp.get_tool("get_skills")
+    assert "alpha: Alpha skill" in updated_tool.description
+    assert "beta: Beta skill" in updated_tool.description
+    assert "beta" in mcp.instructions
+    assert "Beta skill" in mcp.instructions
