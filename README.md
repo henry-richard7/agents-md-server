@@ -21,7 +21,9 @@ Instead of writing and maintaining dedicated Python tool functions for every thi
    - `get_skills`: Allows the model to inspect full skill documentation on demand.
    - `reload_skills`: Reloads all skills from disk at runtime without restarting the server process.
 3. **SSRF Guardrails**: Outbound HTTP requests validate DNS and target IP addresses before connecting. Requests to loopback (`127.0.0.1`), private RFC1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and cloud metadata services (`169.254.169.254`) are blocked by default.
-4. **Token-Efficient Loading**: With `PRELOAD_ALL_SKILLS=false` (default), Skilldeck injects only a lightweight skill catalog (~350 tokens) into system instructions. Full skill instructions are loaded on demand via `get_skills` or MCP resources (`skill://<name>`), keeping context small for local models (e.g., LM Studio, Ollama). Set `PRELOAD_ALL_SKILLS=true` if you prefer inlining everything upfront for larger models.
+4. **On-Demand vs. Preload Modes**:
+   - **Catalog Mode (`PRELOAD_ALL_SKILLS=false`, default)**: Injects only a compact index of skill names and descriptions (~350 tokens) into system instructions. When a task requires a skill, the model fetches its runbook on demand via `get_skills`. This minimizes prompt tokens and cost when using paid frontier APIs (Claude, OpenAI, Gemini).
+   - **Preload Mode (`PRELOAD_ALL_SKILLS=true`)**: Inlines the full markdown instructions of all skills directly into the system prompt. This allows models to call `http_fetch` in a single step without needing to fetch the skill first. **Recommended for local models (e.g., LM Studio, Ollama)**, which often struggle with multi-step tool calling or skip `get_skills`.
 
 ---
 
@@ -77,7 +79,7 @@ PORT=8000
 HOST=0.0.0.0
 LOG_LEVEL=INFO
 
-# Skill loading: false loads skill bodies on demand; true inlines all skills
+# Skill loading: false loads skill bodies on demand (recommended for API models); true inlines all skills (recommended for LM Studio / local models)
 PRELOAD_ALL_SKILLS=false
 
 # Skill credentials (resolved server-side by auth_http_fetch)
@@ -124,7 +126,7 @@ All settings can be specified in `.env` or as environment variables:
 | `HOST` | `0.0.0.0` | Host interface to bind when using HTTP/SSE. |
 | `PORT` | `8000` | Port for HTTP/SSE server. |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Stdio routes logs to stderr. |
-| `PRELOAD_ALL_SKILLS` | `false` | If `true`, inlines full markdown of all skills into the system prompt. If `false`, inlines a compact summary and loads bodies on demand. |
+| `PRELOAD_ALL_SKILLS` | `false` | When `false`, injects a compact catalog and loads skills on demand via `get_skills` (saves tokens for API models). When `true`, inlines all skill runbooks directly into the system prompt (recommended for local models in LM Studio). |
 | `ALLOW_PRIVATE_NETWORKS` | `false` | If `true`, disables SSRF blocks on private/loopback IP addresses. |
 | `HTTP_TIMEOUT_SECONDS` | `30.0` | Request timeout for outbound calls in `http_fetch` and `auth_http_fetch`. |
 | `MAX_RESPONSE_BYTES` | `1000000` | Max response payload size (~1MB). Responses exceeding this return HTTP 413 with pagination guidance. |
@@ -197,7 +199,7 @@ Configure MCP server in LM Studio settings:
 }
 ```
 
-*Note: With `PRELOAD_ALL_SKILLS=false`, Skilldeck includes skill summaries in the `get_skills` tool description so models without resource prompt injection can discover and load instructions automatically.*
+> **Important for Local Models:** Smaller open-weight models (e.g., 7B/8B parameters) often struggle with multi-step tool calling (calling `get_skills` first to inspect endpoints, then calling `http_fetch`). If your local model skips `get_skills` or hallucinates endpoints, set `PRELOAD_ALL_SKILLS=true` in `.env`. This inlines all API runbooks directly into the system prompt so the model can call `http_fetch` in a single step.
 
 ---
 

@@ -244,20 +244,22 @@ When executing SOQL queries:
 
 ---
 
-## 5. Token Optimization (`PRELOAD_ALL_SKILLS`)
+## 5. Preload vs. On-Demand Loading (`PRELOAD_ALL_SKILLS`)
 
-In MCP, instructions passed to the server constructor become part of the agent's system prompt. If you have 10 skills that each contain 1,000 tokens of documentation, inlining all of them wastes 10,000 tokens on every single user turn.
+In MCP, instructions passed to the server become part of the agent's system prompt. Skilldeck provides two loading strategies controlled by `PRELOAD_ALL_SKILLS`:
 
-Skilldeck handles this with the `PRELOAD_ALL_SKILLS` setting:
+| Mode | `PRELOAD_ALL_SKILLS` | How It Works | Recommended For |
+| :--- | :--- | :--- | :--- |
+| **Catalog Mode** *(default)* | `false` | Inlines only skill names and descriptions (~350 tokens total). The agent reads the catalog, calls `get_skills(skill_name="...")` to load the runbook, and then executes the HTTP tool. | **Frontier API models** (Claude 3.5 Sonnet, GPT-4o, Gemini). These models handle multi-step tool calling reliably, and catalog mode avoids paying for thousands of unused skill tokens on every turn. |
+| **Preload Mode** | `true` | Inlines the full markdown body of every skill directly into the system prompt at startup. The model has all API endpoints and schemas upfront, requiring only a single `http_fetch` call. | **Local models** (LM Studio, Ollama, 7B/8B models). Smaller models often skip `get_skills` or fail to execute two-step tool sequences. Preloading removes the intermediate step entirely. Ensure your local model context window is sized to fit the skills (e.g., 16k+). |
 
-| Mode | `PRELOAD_ALL_SKILLS` | Behavior |
-| :--- | :--- | :--- |
-| **Catalog Mode** *(default)* | `false` | Inlines only skill names and descriptions (~350 tokens total). When the model needs a skill, it calls `get_skills(skill_name="...")` or reads `skill://<name>` to fetch full instructions. Recommended for local models (LM Studio, Ollama, 7B/8B models). |
-| **Preload Mode** | `true` | Inlines the full markdown body of every skill directly into the system prompt. Useful if you use frontier models with 1M+ context windows and want zero-latency instruction access. |
-
-You can switch modes in `.env`:
+Configure this in `.env`:
 ```env
+# For Claude Desktop, Cursor, or cloud API models (saves tokens):
 PRELOAD_ALL_SKILLS=false
+
+# For LM Studio, Ollama, or local models (guarantees instructions are visible):
+PRELOAD_ALL_SKILLS=true
 ```
 
 ---
@@ -404,4 +406,4 @@ uv run pytest tests/test_skills.py
 | **ValueError: Parameter 'env_key' expects the NAME of an environment variable** | The model or user passed a raw token string (e.g. `sk-...` or `dapi...`) instead of the variable name. | Instruct the model to pass the variable name itself (e.g. `"DATABRICKS_TOKEN"`), not the value. |
 | **OAuth2 400: `unsupported_grant_type`** | 1. Missing "Run-As" user in Connected App policy (Salesforce).<br>2. Hitting generic login URL instead of custom domain.<br>3. Sending JSON instead of form-urlencoded. | 1. In Salesforce Setup, go to Connected Apps $\rightarrow$ Edit Policies $\rightarrow$ Client Credentials Flow and assign a Run-As user.<br>2. Use `${SALESFORCE_INSTANCE_URL}/services/oauth2/token`. |
 | **Model returns only 10 records and stops** | The prompt or skill example hardcoded `LIMIT 10`. | Remove `LIMIT 10` from skill query examples and document multi-page iteration via `nextRecordsUrl`. |
-| **Local model in LM Studio doesn't use skills** | Context window overflow or model unable to read MCP resources. | Set `PRELOAD_ALL_SKILLS=false`. Skilldeck embeds skill names and descriptions in the `get_skills` tool description so the model calls it automatically. |
+| **Local model (LM Studio, Ollama) ignores skills or skips `get_skills`** | Smaller models often struggle with multi-step tool calling (calling `get_skills` first to read documentation, then calling `http_fetch`). | Set `PRELOAD_ALL_SKILLS=true` in `.env`. This places all skill instructions directly in the system prompt so the model can call `http_fetch` immediately in a single turn without needing `get_skills`. Ensure your context window in LM Studio is set to at least 16k tokens. |
