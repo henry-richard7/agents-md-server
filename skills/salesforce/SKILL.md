@@ -1,10 +1,10 @@
 ---
 name: salesforce
-description: Read-only querying and inspection of Salesforce CRM data (Accounts, Contacts, Leads, Opportunities, and Custom Objects) via the Salesforce REST API. Supports SOQL queries, record retrieval by ID, schema inspection (describe), and pagination. Supports both OAuth2 Client Credentials and Bearer token auth.
+description: Read-only querying and inspection of Salesforce CRM data (Accounts, Contacts, Leads, Opportunities, and Custom Objects) via the Salesforce REST API. Supports SOQL queries, automatic multi-page pagination (nextRecordsUrl), record retrieval by ID, and schema inspection (describe).
 compatibility: Requires internet access to your Salesforce instance. Authentication required via OAuth2 or Bearer token.
 metadata:
   author: Henry-Richard
-  version: "1.0"
+  version: "1.1"
   required_env:
     - SALESFORCE_INSTANCE_URL
     - SALESFORCE_CLIENT_ID (if using OAuth2)
@@ -22,64 +22,46 @@ Use this skill to query, inspect, and read data from Salesforce CRM using the Sa
 
 ## Authentication Options
 
-Salesforce supports two authentication modes with `auth_http_fetch`. Choose the one configured in your environment:
+Choose the authentication mode configured in your environment:
 
-### Option A: OAuth 2.0 Client Credentials (Recommended for Connected Apps)
-
-Use this when connecting via a Salesforce Connected App or External Client App. Skilldeck automatically fetches and caches access tokens from Salesforce's OAuth endpoint and handles token refreshes:
-
+### Option A: OAuth 2.0 Client Credentials (Recommended)
 - **`auth_type`**: `"client_credentials"`
-- **`env_client_id`**: `"SALESFORCE_CLIENT_ID"` (Consumer Key from Connected App)
-- **`env_client_secret`**: `"SALESFORCE_CLIENT_SECRET"` (Consumer Secret)
-- **`token_url`**: `"${SALESFORCE_INSTANCE_URL}/services/oauth2/token"` (or `"${SALESFORCE_INSTANCE_URL}/services/oauth2/token"`)
+- **`env_client_id`**: `"SALESFORCE_CLIENT_ID"`
+- **`env_client_secret`**: `"SALESFORCE_CLIENT_SECRET"`
+- **`token_url`**: `"${SALESFORCE_INSTANCE_URL}/services/oauth2/token"`
 - **Base URL**: `${SALESFORCE_INSTANCE_URL}`
 
-```json
-{
-  "auth_type": "client_credentials",
-  "env_client_id": "SALESFORCE_CLIENT_ID",
-  "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
-  "method": "GET",
-  "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
-  "query_params": {
-    "q": "SELECT Id, Name, Industry FROM Account LIMIT 10"
-  }
-}
-```
-
-### Option B: Direct Bearer Token (Quick Testing / Personal Access)
-
-Use this if you already have a temporary access token or session ID:
-
+### Option B: Direct Bearer Token
 - **`auth_type`**: `"bearer"`
 - **`env_key`**: `"SALESFORCE_TOKEN"`
 - **Base URL**: `${SALESFORCE_INSTANCE_URL}`
 
-```json
-{
-  "auth_type": "bearer",
-  "env_key": "SALESFORCE_TOKEN",
-  "method": "GET",
-  "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
-  "query_params": {
-    "q": "SELECT Id, Name, Industry FROM Account LIMIT 10"
-  }
-}
-```
+---
 
-> **Note:** Never pass raw secrets directly in prompts or tool calls. Always pass variable names like `env_client_id="SALESFORCE_CLIENT_ID"` or `env_key="SALESFORCE_TOKEN"` so secrets remain protected in `.env`.
+## CRITICAL: SOQL Query & Pagination Rules
+
+### Rule 1: DO NOT artificially limit queries
+- **Never append `LIMIT 10` or `LIMIT 20` unless the user explicitly requested a small limit** (e.g., *"give me top 5 accounts"*).
+- When asked to list, search, or summarize records (e.g. *"list all opportunities in Stage 'Closed Won'"* or *"find accounts in New York"*), write the full query **without a `LIMIT` clause**.
+
+### Rule 2: Always inspect `"done"` and paginate with `nextRecordsUrl`
+Salesforce returns records in batches (up to 2,000 records per page).
+1. When you execute a query, check the response:
+   - If `"done": true`: you have all the records.
+   - If `"done": false`: there are more records. Notice the `"nextRecordsUrl"` field in the response (e.g., `"/services/data/v60.0/query/01gD0000002HU6iIAG-2000"`).
+2. **You MUST fetch the next page** by making a follow-up call:
+   - Call `auth_http_fetch` with `url="${SALESFORCE_INSTANCE_URL}" + response["nextRecordsUrl"]`.
+   - Do **NOT** pass `q` or `query_params` when fetching `nextRecordsUrl`. The query ID is already in the URL path.
+   - Repeat this until `"done": true`, or until you have gathered all records needed to answer the user's question.
 
 ---
 
-## 1. Execute SOQL Query (Search & Read)
+## 1. Execute SOQL Query & Pagination Example
 
-Use SOQL (Salesforce Object Query Language) to retrieve records with filters, sorting, and limits.
-
-### How to Call `auth_http_fetch`
+### Step 1: Initial Query
 - **Method**: `GET`
 - **URL**: `${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query`
-- **Query Params**: Pass `q` inside `query_params` (do **not** put raw SOQL directly in the URL string).
+- **Query Params**: Pass `q` inside `query_params` with your complete SOQL query (do not add `LIMIT` unless requested).
 
 ```json
 {
@@ -90,35 +72,61 @@ Use SOQL (Salesforce Object Query Language) to retrieve records with filters, so
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
   "query_params": {
-    "q": "SELECT Id, Name, Industry, AnnualRevenue, Phone FROM Account ORDER BY CreatedDate DESC LIMIT 20"
+    "q": "SELECT Id, Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity WHERE IsClosed = false"
   }
 }
 ```
 
+### Step 2: Next Page Call (When `done: false`)
+If the initial response has `"done": false` and `"nextRecordsUrl": "/services/data/v60.0/query/01gD0000002HU6iIAG-2000"`, make the follow-up call immediately:
+
+```json
+{
+  "auth_type": "client_credentials",
+  "env_client_id": "SALESFORCE_CLIENT_ID",
+  "env_client_secret": "SALESFORCE_CLIENT_SECRET",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
+  "method": "GET",
+  "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query/01gD0000002HU6iIAG-2000"
+}
+```
+
 ### Common SOQL Patterns
-- **Find Accounts by name/industry:**
-  `SELECT Id, Name, Type, Industry, BillingCity FROM Account WHERE Name LIKE '%Acme%' LIMIT 10`
-- **Find Contacts by email/account:**
-  `SELECT Id, FirstName, LastName, Email, Title, Account.Name FROM Contact WHERE Email = 'john@example.com'`
-- **Find Open Opportunities:**
-  `SELECT Id, Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity WHERE IsClosed = false ORDER BY Amount DESC LIMIT 25`
-- **Find Recent Leads:**
-  `SELECT Id, Name, Company, Status, Email, LeadSource FROM Lead WHERE Status != 'Closed - Converted' ORDER BY CreatedDate DESC LIMIT 20`
+- **Accounts:**
+  `SELECT Id, Name, Type, Industry, BillingCity, AnnualRevenue FROM Account ORDER BY Name ASC`
+- **Contacts:**
+  `SELECT Id, FirstName, LastName, Email, Title, Account.Name FROM Contact WHERE Email != null`
+- **Opportunities:**
+  `SELECT Id, Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity WHERE IsClosed = false`
+- **Leads:**
+  `SELECT Id, Name, Company, Status, Email, LeadSource FROM Lead WHERE Status != 'Closed - Converted'`
+- **Custom Objects:**
+  `SELECT Id, Name, Custom_Field__c FROM My_Custom_Object__c`
 
-### Handling Pagination (`nextRecordsUrl`)
-When a query has more records than the batch size, the response contains:
-- `"done": false`
-- `"nextRecordsUrl": "/services/data/v60.0/query/01gD0000002HU6iIAG-2000"`
-
-To fetch the next page, call `auth_http_fetch` with:
-- **URL**: `${SALESFORCE_INSTANCE_URL}{nextRecordsUrl}`
-- **Method**: `GET`
+### Controlling Page Size (Optional)
+If you want smaller page batches (e.g. 100 or 200 records per page), pass the `Sforce-Query-Options` header:
+```json
+{
+  "auth_type": "client_credentials",
+  "env_client_id": "SALESFORCE_CLIENT_ID",
+  "env_client_secret": "SALESFORCE_CLIENT_SECRET",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
+  "method": "GET",
+  "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
+  "query_params": {
+    "q": "SELECT Id, Name FROM Account"
+  },
+  "extra_headers": {
+    "Sforce-Query-Options": "batchSize=200"
+  }
+}
+```
 
 ---
 
 ## 2. Inspect Object Schema (Describe)
 
-Inspect the schema to see available field names, types, relationships, and picklist values.
+Inspect schema to see all available field names, types, relationships, and picklist values.
 
 - **Method**: `GET`
 - **URL**: `${SALESFORCE_INSTANCE_URL}/services/data/v60.0/sobjects/{sObject}/describe`

@@ -255,9 +255,7 @@ async def execute_http_request(
 
             # Determine whether payload should be sent as form data or JSON
             content_type_val = (
-                current_headers.get("Content-Type")
-                or current_headers.get("content-type")
-                or ""
+                current_headers.get("Content-Type") or current_headers.get("content-type") or ""
             )
             is_form = "application/x-www-form-urlencoded" in content_type_val.lower()
 
