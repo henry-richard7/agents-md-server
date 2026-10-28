@@ -15,6 +15,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-project --no-dev
 
+# Copy source code and install project into virtualenv
+COPY src/ /app/src/
+COPY pyproject.toml README.md /app/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
 # Final production image
 FROM python:3.13-slim AS runner
 
@@ -34,9 +40,6 @@ COPY --chown=appuser:appuser tools/ /app/tools/
 COPY --chown=appuser:appuser AGENTS.md /app/AGENTS.md
 COPY --chown=appuser:appuser pyproject.toml /app/pyproject.toml
 COPY --chown=appuser:appuser README.md /app/README.md
-
-# Install project package into the venv
-RUN --from=ghcr.io/astral-sh/uv:latest /uv pip install --no-deps -e /app
 
 USER appuser
 
