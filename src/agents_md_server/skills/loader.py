@@ -85,8 +85,20 @@ def load_skills(skills_dir: Path) -> dict[str, Skill]:
     return skills
 
 
-def build_system_prompt(agents_md_path: Path, skills: dict[str, Skill]) -> str:
-    """Combine AGENTS.md base prompt with loaded skills into full system prompt."""
+def build_system_prompt(
+    agents_md_path: Path,
+    skills: dict[str, Skill],
+    preload_all: bool = False,
+) -> str:
+    """Combine AGENTS.md base prompt with loaded skills into full system prompt.
+
+    Args:
+        agents_md_path: Path to the root AGENTS.md instructions.
+        skills: Dictionary of loaded Skill objects.
+        preload_all: If True, inlines full raw markdown for every skill.
+                     If False (default), inlines only a compact skills catalog and instructs
+                     the agent to fetch full runbooks on-demand via `get_skills`.
+    """
     base = ""
     if agents_md_path.exists():
         try:
@@ -97,9 +109,36 @@ def build_system_prompt(agents_md_path: Path, skills: dict[str, Skill]) -> str:
     if not skills:
         return base
 
-    skill_blocks = "\n\n---\n\n".join(
-        f"## Skill: {skill.name}\n\n{skill.raw_content}" for skill in skills.values()
+    if preload_all:
+        skill_blocks = "\n\n---\n\n".join(
+            f"## Skill: {skill.name}\n\n{skill.raw_content}" for skill in skills.values()
+        )
+        full = f"{base}\n\n# Loaded Skills\n\n{skill_blocks}".strip()
+    else:
+        # Lightweight on-demand skills catalog
+        catalog_items = []
+        for s in skills.values():
+            desc = s.description or "No description provided."
+            compat = f" ({s.compatibility})" if s.compatibility else ""
+            catalog_items.append(f"- **{s.name}**: {desc}{compat}")
+
+        catalog_text = "\n".join(catalog_items)
+        skills_section = (
+            "# Available Skills Catalog\n\n"
+            "You have access to specialized external API skills. Before calling `http_fetch` or `auth_http_fetch`, "
+            "you MUST first retrieve the exact endpoint URLs, parameters, and runbook for that skill using `get_skills`.\n\n"
+            f"{catalog_text}\n\n"
+            "## Skill Execution Workflow:\n"
+            '1. When the user\'s request matches an available skill above, call `get_skills(skill_name="<name>")`.\n'
+            "2. Read the returned API endpoints, required headers, and parameters.\n"
+            "3. Execute the request using `http_fetch` or `auth_http_fetch` following the skill's instructions."
+        )
+        full = f"{base}\n\n{skills_section}".strip()
+
+    logger.debug(
+        "System prompt built (preload_all=%s): %d characters, %d words",
+        preload_all,
+        len(full),
+        len(full.split()),
     )
-    full = f"{base}\n\n# Loaded Skills\n\n{skill_blocks}".strip()
-    logger.debug("System prompt built: %d characters, %d words", len(full), len(full.split()))
     return full

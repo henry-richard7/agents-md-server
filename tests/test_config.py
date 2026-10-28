@@ -11,6 +11,7 @@ def test_default_settings():
     assert s.transport == "http"
     assert s.allow_private_networks is False
     assert s.http_timeout_seconds == 30.0
+    assert s.preload_all_skills is False
 
 
 def test_custom_paths(tmp_path: Path):

@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 class SkillsState:
     """Thread-safe state container for loaded skills and system prompt with hot-reloading."""
 
-    def __init__(self, skills_dir: Path, agents_md_path: Path):
+    def __init__(self, skills_dir: Path, agents_md_path: Path, preload_all: bool = False):
         self.skills_dir = skills_dir
         self.agents_md_path = agents_md_path
+        self.preload_all = preload_all
         self.skills: dict[str, Skill] = {}
         self.system_prompt: str = ""
         self.reload()
@@ -41,8 +42,14 @@ class SkillsState:
     def reload(self) -> dict[str, Skill]:
         """Reload all skills from disk and rebuild system prompt."""
         self.skills = load_skills(self.skills_dir)
-        self.system_prompt = build_system_prompt(self.agents_md_path, self.skills)
-        logger.info("Skills state reloaded: %s", list(self.skills.keys()))
+        self.system_prompt = build_system_prompt(
+            self.agents_md_path, self.skills, preload_all=self.preload_all
+        )
+        logger.info(
+            "Skills state reloaded: %s (preload_all=%s)",
+            list(self.skills.keys()),
+            self.preload_all,
+        )
         return self.skills
 
 
@@ -51,7 +58,11 @@ def create_server(app_settings: Settings | None = None) -> FastMCP:
     cfg = app_settings or default_settings
 
     # 1. Initialize SkillsState (loads skills and builds system prompt)
-    skills_state = SkillsState(cfg.resolved_skills_dir, cfg.resolved_agents_md_path)
+    skills_state = SkillsState(
+        cfg.resolved_skills_dir,
+        cfg.resolved_agents_md_path,
+        preload_all=cfg.preload_all_skills,
+    )
 
     logger.info("Initializing FastMCP server '%s' (v%s)", cfg.server_name, __version__)
     logger.info("Skills loaded: %s", list(skills_state.skills.keys()))
@@ -137,8 +148,8 @@ def create_server(app_settings: Settings | None = None) -> FastMCP:
 
     @mcp.tool(
         description=(
-            "Inspect and retrieve loaded skill instructions and API endpoints. "
-            "Call this if you need instructions for a specific skill, or leave skill_name empty to list all skills.\n\n"
+            "Inspect and retrieve full API documentation, endpoints, and instructions for a specific skill. "
+            "ALWAYS call this tool first before calling http_fetch or auth_http_fetch for any available skill.\n\n"
             + _build_skill_descriptions_summary()
         )
     )

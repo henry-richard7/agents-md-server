@@ -38,6 +38,12 @@ class Settings(BaseSettings):
         default=True, description="Whether HTTP transport runs in stateless mode"
     )
 
+    # Skill loading mode
+    preload_all_skills: bool = Field(
+        default=False,
+        description="If True, inlines full skill bodies into system prompt. If False (default), inlines only compact catalog and loads bodies on-demand via get_skills.",
+    )
+
     # Logging and diagnostics
     log_level: str = Field(default="INFO", description="Logging level")
     server_name: str = Field(default="skilldeck", description="MCP Server Name")
