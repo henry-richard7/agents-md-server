@@ -39,7 +39,9 @@ def register_all_tools(mcp: FastMCP, external_tools_dir: Path | None = None) -> 
                         mod.register(mcp)
                         logger.info("Registered external tool module: %s", tool_file.name)
                     else:
-                        logger.warning("Skipped external tool %s (missing register(mcp))", tool_file.name)
+                        logger.warning(
+                            "Skipped external tool %s (missing register(mcp))", tool_file.name
+                        )
             except (ImportError, AttributeError, ValueError, OSError) as e:
                 logger.error("Failed to load external tool %s: %s", tool_file.name, e)
 

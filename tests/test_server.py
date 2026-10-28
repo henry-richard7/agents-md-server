@@ -1,8 +1,42 @@
 import json
+from pathlib import Path
 
 import pytest
 
-from agents_md_server.server import create_server
+from agents_md_server.server import SkillsState, create_server
+
+
+def test_skills_state_hot_reload(tmp_path: Path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    agents_md = tmp_path / "AGENTS.md"
+    agents_md.write_text("# Base Agent\nDo things.", encoding="utf-8")
+
+    # Initial skill
+    s1 = skills_dir / "skill1"
+    s1.mkdir()
+    (s1 / "SKILL.md").write_text(
+        "---\nname: skill1\ndescription: First skill\n---\nRun skill 1",
+        encoding="utf-8",
+    )
+
+    state = SkillsState(skills_dir, agents_md)
+    assert "skill1" in state.skills
+    assert "First skill" in state.system_prompt
+    assert "skill2" not in state.skills
+
+    # Add second skill dynamically on disk
+    s2 = skills_dir / "skill2"
+    s2.mkdir()
+    (s2 / "SKILL.md").write_text(
+        "---\nname: skill2\ndescription: Second skill\n---\nRun skill 2",
+        encoding="utf-8",
+    )
+
+    # Hot reload!
+    state.reload()
+    assert "skill2" in state.skills
+    assert "Second skill" in state.system_prompt
 
 
 @pytest.mark.asyncio
@@ -17,6 +51,7 @@ async def test_server_initialization():
     assert "auth_http_fetch" in tool_names
     assert "cost_estimator" in tool_names
     assert "get_skills" in tool_names
+    assert "reload_skills" in tool_names
 
 
 @pytest.mark.asyncio

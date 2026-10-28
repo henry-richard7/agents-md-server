@@ -25,7 +25,6 @@ PROJECT_ROOT = _find_project_root()
 load_dotenv(PROJECT_ROOT / ".env")
 
 
-
 class Settings(BaseSettings):
     """Application and MCP server configuration."""
 
@@ -53,6 +52,14 @@ class Settings(BaseSettings):
     )
     oauth_token_buffer_seconds: int = Field(
         default=60, description="Safety buffer before token expiry to trigger refresh"
+    )
+    max_response_bytes: int = Field(
+        default=1_000_000,
+        description="Maximum response size in bytes (~1MB) before returning an HTTP 413 pagination prompt",
+    )
+    max_redirects: int = Field(
+        default=5,
+        description="Maximum number of HTTP redirects to follow safely with SSRF validation",
     )
 
     # File and Directory Paths

@@ -170,7 +170,9 @@ from pydantic import BaseModel, Field
 
 
 class DNSQuery(BaseModel):
-    hostname: str = Field(..., min_length=3, description="Domain name to resolve (e.g., 'example.com')")
+    hostname: str = Field(
+        ..., min_length=3, description="Domain name to resolve (e.g., 'example.com')"
+    )
 
 
 def register(mcp: FastMCP) -> None:
@@ -227,13 +229,14 @@ import pytest
 from fastmcp import FastMCP
 from tools.text_utils import register
 
+
 def test_word_counter():
     mcp = FastMCP("test")
     register(mcp)
-    
+
     tool = mcp.get_tool("word_counter")
     result = tool.fn(text="Hello world\nSecond line")
-    
+
     assert result["words"] == 4
     assert result["lines"] == 2
 ```

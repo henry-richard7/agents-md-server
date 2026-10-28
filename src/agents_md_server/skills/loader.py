@@ -29,7 +29,9 @@ def parse_skill_markdown(content: str, default_name: str, path: Path | None = No
                 if isinstance(parsed_yaml, dict):
                     metadata_dict = parsed_yaml
             except (yaml.YAMLError, ValueError) as e:
-                logger.warning("Failed to parse YAML frontmatter in %s: %s", path or default_name, e)
+                logger.warning(
+                    "Failed to parse YAML frontmatter in %s: %s", path or default_name, e
+                )
 
     name = str(metadata_dict.get("name") or default_name).strip()
     description = str(metadata_dict.get("description") or "").strip()
@@ -74,7 +76,9 @@ def load_skills(skills_dir: Path) -> dict[str, Skill]:
             content = skill_md.read_text(encoding="utf-8")
             skill = parse_skill_markdown(content, default_name=skill_path.name, path=skill_md)
             skills[skill.name] = skill
-            logger.info("Loaded skill: %s (version: %s)", skill.name, skill.metadata.get("version", "N/A"))
+            logger.info(
+                "Loaded skill: %s (version: %s)", skill.name, skill.metadata.get("version", "N/A")
+            )
         except (OSError, UnicodeDecodeError, ValueError) as e:
             logger.error("Error reading skill from %s: %s", skill_md, e)
 

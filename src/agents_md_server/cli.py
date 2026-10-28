@@ -18,7 +18,8 @@ def main() -> None:
         description="Skilldeck MCP Server - Multi-skill Agent Model Context Protocol Server",
     )
     parser.add_argument(
-        "-v", "--version",
+        "-v",
+        "--version",
         action="version",
         version=f"%(prog)s {__version__}",
     )
@@ -39,7 +40,8 @@ def main() -> None:
         help="Host interface to bind HTTP/SSE server to",
     )
     run_parser.add_argument(
-        "-p", "--port",
+        "-p",
+        "--port",
         type=int,
         default=default_settings.port,
         help="Port for HTTP/SSE server",

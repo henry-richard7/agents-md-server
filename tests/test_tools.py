@@ -5,10 +5,11 @@ from fastmcp import FastMCP
 from pydantic import ValidationError
 
 from agents_md_server.tools.auth_http_fetch import (
-    _OAUTH2_TOKEN_CACHE,
     _get_oauth2_token,
     _resolve_env,
+    invalidate_oauth2_cache,
 )
+from agents_md_server.tools.auth_http_fetch import register as register_auth
 from agents_md_server.tools.cost_estimator import CostEstimatorParams
 from agents_md_server.tools.cost_estimator import register as register_cost
 from agents_md_server.tools.http_fetch import register as register_http
@@ -73,16 +74,88 @@ def test_resolve_env(monkeypatch):
         _resolve_env("NON_EXISTENT_VAR_12345", "env_key")
 
 
+def test_resolve_env_rejects_raw_secrets():
+    """Verify that models passing raw secrets instead of variable names receive guidance."""
+    with pytest.raises(ValueError, match="expects the NAME of an environment variable"):
+        _resolve_env("Bearer dapi1234567890abcdef", "env_key")
+
+    with pytest.raises(ValueError, match="expects the NAME of an environment variable"):
+        _resolve_env("sk-proj-1234567890abcdef1234567890", "env_key")
+
+    with pytest.raises(ValueError, match="expects the NAME of an environment variable"):
+        _resolve_env("dapi_super_long_secret_key_that_is_clearly_not_a_var", "env_key")
+
+
+@pytest.mark.asyncio
+async def test_auth_http_fetch_custom_header_prefix(monkeypatch):
+    """Test custom header_name and header_prefix support."""
+    monkeypatch.setenv("CUSTOM_KEY", "my-secret-key-123")
+    mcp = FastMCP("test")
+    register_auth(mcp)
+    tool = await mcp.get_tool("auth_http_fetch")
+
+    with patch(
+        "agents_md_server.tools.auth_http_fetch.execute_http_request", new_callable=AsyncMock
+    ) as mock_req:
+        mock_req.return_value = {"status": "ok"}
+
+        # Custom header name (e.g. api-key) and prefix ("")
+        await tool.fn(
+            url="https://api.example.com/data",
+            auth_type="bearer",
+            env_key="CUSTOM_KEY",
+            header_name="api-key",
+            header_prefix="",
+        )
+        assert mock_req.call_args.kwargs["headers"]["api-key"] == "my-secret-key-123"
+
+        # Custom prefix (e.g. "Token ")
+        await tool.fn(
+            url="https://api.example.com/data",
+            auth_type="bearer",
+            env_key="CUSTOM_KEY",
+            header_prefix="Token ",
+        )
+        assert mock_req.call_args.kwargs["headers"]["Authorization"] == "Token my-secret-key-123"
+
+
+@pytest.mark.asyncio
+async def test_auth_http_fetch_template_header_substitution(monkeypatch):
+    """Test __ENV__ substring substitution in extra_headers."""
+    monkeypatch.setenv("DEEPL_KEY", "deepl-key-value")
+    mcp = FastMCP("test")
+    register_auth(mcp)
+    tool = await mcp.get_tool("auth_http_fetch")
+
+    with patch(
+        "agents_md_server.tools.auth_http_fetch.execute_http_request", new_callable=AsyncMock
+    ) as mock_req:
+        mock_req.return_value = {"status": "ok"}
+
+        await tool.fn(
+            url="https://api.example.com/translate",
+            auth_type="api_key_header",
+            env_key="DEEPL_KEY",
+            extra_headers={"Authorization": "DeepL-Auth-Key __ENV__"},
+        )
+        assert (
+            mock_req.call_args.kwargs["headers"]["Authorization"]
+            == "DeepL-Auth-Key deepl-key-value"
+        )
+
+
 @pytest.mark.asyncio
 async def test_oauth2_token_caching():
-    _OAUTH2_TOKEN_CACHE.clear()
+    invalidate_oauth2_cache()
 
     mock_response = {
         "access_token": "mock-token-abc",
         "expires_in": 3600,
     }
 
-    with patch("agents_md_server.tools.auth_http_fetch.execute_http_request", new_callable=AsyncMock) as mock_req:
+    with patch(
+        "agents_md_server.tools.auth_http_fetch.execute_http_request", new_callable=AsyncMock
+    ) as mock_req:
         mock_req.return_value = mock_response
 
         # First fetch: should make network request
@@ -104,3 +177,14 @@ async def test_oauth2_token_caching():
         assert token2 == "mock-token-abc"
         assert err2 is None
         assert mock_req.call_count == 1  # Still 1, verified cache hit!
+
+        # Invalidate cache and verify refetch
+        invalidate_oauth2_cache("https://auth.example.com/token", "my-client-id")
+        token3, err3 = await _get_oauth2_token(
+            token_url="https://auth.example.com/token",
+            client_id="my-client-id",
+            client_secret="my-secret",
+        )
+        assert token3 == "mock-token-abc"
+        assert err3 is None
+        assert mock_req.call_count == 2

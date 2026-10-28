@@ -8,7 +8,7 @@ import os
 import re
 import socket
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Cloud metadata IP addresses to strictly guard against credential exfiltration
 BLOCKED_METADATA_IPS = {
     "169.254.169.254",  # AWS, GCP, Azure, OpenStack instance metadata
-    "fd00:ec2::254",    # AWS IPv6 instance metadata
+    "fd00:ec2::254",  # AWS IPv6 instance metadata
     "100.100.100.200",  # Alibaba Cloud metadata
 }
 
@@ -47,17 +47,21 @@ def validate_url(url: str, allow_private_networks: bool | None = None) -> str:
 
     parsed = urlsplit(url)
     if not parsed.scheme or parsed.scheme.lower() not in ("http", "https"):
-        raise ValueError(f"Invalid URL scheme: '{parsed.scheme}'. Only 'http' and 'https' are allowed.")
+        raise ValueError(
+            f"Invalid URL scheme: '{parsed.scheme}'. Only 'http' and 'https' are allowed."
+        )
 
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL does not contain a valid hostname.")
 
-    # Always block explicit localhost references if private networks are disabled
     normalized_host = hostname.lower().strip()
+
+    # Fast-path localhost check
     if not allow_private_networks and normalized_host in (
         "localhost",
         "localhost.localdomain",
+        "127.0.0.1",
         "0.0.0.0",
         "::1",
     ):
@@ -67,15 +71,39 @@ def validate_url(url: str, allow_private_networks: bool | None = None) -> str:
     if normalized_host in BLOCKED_METADATA_IPS:
         raise SecurityError(f"Access to cloud metadata endpoint '{hostname}' is forbidden.")
 
+    # Direct IP literal check (avoid DNS lookup if host is already an IP address)
+    try:
+        ip_obj = ipaddress.ip_address(normalized_host)
+        if not allow_private_networks and (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_reserved
+            or ip_obj.is_multicast
+        ):
+            raise SecurityError(
+                f"Direct IP access to '{hostname}' is a private or local network address. "
+                "Access is blocked by SSRF policy."
+            )
+        # If it's a valid public IP literal, no need for DNS resolution
+        return url
+    except ValueError:
+        # Not an IP literal; proceed to domain DNS resolution
+        pass
+
     # DNS resolution check if private networks are disabled
     if not allow_private_networks:
         try:
             # Resolve hostname to all associated IP addresses
-            addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+            addr_info = socket.getaddrinfo(
+                hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+            )
             for family, _, _, _, sockaddr in addr_info:
                 ip_str = sockaddr[0]
                 if ip_str in BLOCKED_METADATA_IPS:
-                    raise SecurityError(f"Resolved address '{ip_str}' is a forbidden cloud metadata IP.")
+                    raise SecurityError(
+                        f"Resolved address '{ip_str}' is a forbidden cloud metadata IP."
+                    )
 
                 ip_obj = ipaddress.ip_address(ip_str)
                 if (
@@ -114,7 +142,7 @@ class HttpClientManager:
                 timeout=httpx.Timeout(settings.http_timeout_seconds),
                 limits=limits,
                 headers={"User-Agent": "Skilldeck-MCP/0.1.0 (FastMCP)"},
-                follow_redirects=True,
+                follow_redirects=False,  # Redirects are validated and handled hop-by-hop for SSRF security
             )
         return cls._client
 
@@ -196,7 +224,7 @@ async def execute_http_request(
     allow_private_networks: bool | None = None,
     base_url: str | None = None,
 ) -> dict[str, Any]:
-    """Validate URL, perform HTTP request using shared connection pool, and format response.
+    """Validate URL, perform HTTP request with SSRF-safe redirect following and size protection.
 
     Returns:
         Structured response dictionary containing status, headers, and parsed content or error.
@@ -207,19 +235,97 @@ async def execute_http_request(
     except (ValueError, SecurityError) as e:
         return {"error": f"Security / Validation error: {e!s}", "status_code": 400}
 
-
     client = HttpClientManager.get_client()
 
+    current_url = validated_url
+    current_method = method.upper()
+    current_params = params or {}
+    current_headers = dict(headers or {})
+    current_body = json_body
+    redirect_count = 0
+
     try:
-        response = await client.request(
-            method=method.upper(),
-            url=validated_url,
-            params=params or {},
-            json=json_body,
-            headers=headers or {},
-        )
+        # Loop to safely follow redirects while validating each target against SSRF
+        while True:
+            response = await client.request(
+                method=current_method,
+                url=current_url,
+                params=current_params,
+                json=current_body,
+                headers=current_headers,
+            )
+
+            # Check for HTTP redirect status codes (301, 302, 303, 307, 308)
+            if response.is_redirect and "location" in response.headers:
+                if redirect_count >= settings.max_redirects:
+                    return {
+                        "error": f"Too many redirects (exceeded limit of {settings.max_redirects})",
+                        "status_code": response.status_code,
+                    }
+                redirect_count += 1
+                location = response.headers["location"]
+                next_url = urljoin(current_url, location)
+
+                # Validate next_url for SSRF security
+                try:
+                    current_url = validate_url(
+                        next_url, allow_private_networks=allow_private_networks
+                    )
+                except (ValueError, SecurityError) as e:
+                    return {
+                        "error": f"Security / SSRF blocked redirect to '{location}': {e!s}",
+                        "status_code": 403,
+                    }
+
+                # HTTP 301, 302, 303 typically switch to GET and drop payload
+                if response.status_code in (301, 302, 303):
+                    current_method = "GET"
+                    current_body = None
+                    current_params = {}
+                continue
+
+            break
+
         response.raise_for_status()
 
+        # 1. Catastrophic payload protection: check byte size before processing
+        content_bytes = response.content
+        content_size = len(content_bytes)
+        if content_size > settings.max_response_bytes:
+            size_mb = content_size / 1_000_000
+            max_mb = settings.max_response_bytes / 1_000_000
+            return {
+                "error": (
+                    f"Response payload ({size_mb:.1f} MB) exceeds maximum safety limit ({max_mb:.1f} MB). "
+                    "To prevent context window overflow, please narrow your request using API query parameters "
+                    "(such as 'limit', 'page_size', 'page_token', or 'offset') or apply specific filters."
+                ),
+                "status_code": 413,
+                "size_bytes": content_size,
+            }
+
+        # 2. Binary content detection
+        content_type = response.headers.get("content-type", "").lower()
+        is_explicit_binary = any(
+            t in content_type
+            for t in (
+                "image/",
+                "video/",
+                "audio/",
+                "application/pdf",
+                "application/zip",
+                "application/gzip",
+            )
+        )
+        has_null_bytes = b"\x00" in content_bytes[:1024]
+
+        if is_explicit_binary or (("octet-stream" in content_type) and has_null_bytes):
+            return {
+                "error": f"Binary content ({content_type or 'binary stream'}) is not supported directly. Expected JSON or text.",
+                "status_code": response.status_code,
+            }
+
+        # 3. Parse JSON or text without mutating schema or truncating items
         try:
             return response.json()
         except ValueError:

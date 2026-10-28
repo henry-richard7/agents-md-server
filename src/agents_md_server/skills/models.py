@@ -13,7 +13,9 @@ class SkillMetadata(BaseModel):
 
     name: str = Field(..., description="Skill identifier name")
     description: str = Field(default="", description="Skill purpose and capability summary")
-    compatibility: str | None = Field(default=None, description="System requirements or constraints")
+    compatibility: str | None = Field(
+        default=None, description="System requirements or constraints"
+    )
     metadata: dict[str, Any] = Field(default_factory=dict, description="Custom metadata fields")
 
 
