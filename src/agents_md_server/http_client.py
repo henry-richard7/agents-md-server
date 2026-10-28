@@ -247,11 +247,26 @@ async def execute_http_request(
     try:
         # Loop to safely follow redirects while validating each target against SSRF
         while True:
+            # Determine whether payload should be sent as form data or JSON
+            content_type_val = (
+                current_headers.get("Content-Type") or current_headers.get("content-type") or ""
+            )
+            is_form = "application/x-www-form-urlencoded" in content_type_val.lower()
+
+            # Determine whether payload should be sent as form data or JSON
+            content_type_val = (
+                current_headers.get("Content-Type")
+                or current_headers.get("content-type")
+                or ""
+            )
+            is_form = "application/x-www-form-urlencoded" in content_type_val.lower()
+
             response = await client.request(
                 method=current_method,
                 url=current_url,
                 params=current_params,
-                json=current_body,
+                json=current_body if not is_form else None,
+                data=current_body if is_form else None,
                 headers=current_headers,
             )
 
