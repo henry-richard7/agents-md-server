@@ -31,7 +31,7 @@ Use this when connecting via a Salesforce Connected App or External Client App. 
 - **`auth_type`**: `"client_credentials"`
 - **`env_client_id`**: `"SALESFORCE_CLIENT_ID"` (Consumer Key from Connected App)
 - **`env_client_secret`**: `"SALESFORCE_CLIENT_SECRET"` (Consumer Secret)
-- **`token_url`**: `"https://login.salesforce.com/services/oauth2/token"` (or `"https://test.salesforce.com/services/oauth2/token"` for sandboxes)
+- **`token_url`**: `"${SALESFORCE_INSTANCE_URL}/services/oauth2/token"` (or `"${SALESFORCE_INSTANCE_URL}/services/oauth2/token"`)
 - **Base URL**: `${SALESFORCE_INSTANCE_URL}`
 
 ```json
@@ -39,7 +39,7 @@ Use this when connecting via a Salesforce Connected App or External Client App. 
   "auth_type": "client_credentials",
   "env_client_id": "SALESFORCE_CLIENT_ID",
   "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "https://login.salesforce.com/services/oauth2/token",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
   "query_params": {
@@ -86,7 +86,7 @@ Use SOQL (Salesforce Object Query Language) to retrieve records with filters, so
   "auth_type": "client_credentials",
   "env_client_id": "SALESFORCE_CLIENT_ID",
   "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "https://login.salesforce.com/services/oauth2/token",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/query",
   "query_params": {
@@ -129,7 +129,7 @@ Inspect the schema to see available field names, types, relationships, and pickl
   "auth_type": "client_credentials",
   "env_client_id": "SALESFORCE_CLIENT_ID",
   "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "https://login.salesforce.com/services/oauth2/token",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/sobjects/Account/describe"
 }
@@ -149,7 +149,7 @@ Retrieve all or specific fields of a single record using its 15 or 18 character 
   "auth_type": "client_credentials",
   "env_client_id": "SALESFORCE_CLIENT_ID",
   "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "https://login.salesforce.com/services/oauth2/token",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/sobjects/Contact/003D000000QV4IsIAL"
 }
@@ -169,7 +169,7 @@ Check remaining daily REST API calls and governor limits for the Salesforce org.
   "auth_type": "client_credentials",
   "env_client_id": "SALESFORCE_CLIENT_ID",
   "env_client_secret": "SALESFORCE_CLIENT_SECRET",
-  "token_url": "https://login.salesforce.com/services/oauth2/token",
+  "token_url": "${SALESFORCE_INSTANCE_URL}/services/oauth2/token",
   "method": "GET",
   "url": "${SALESFORCE_INSTANCE_URL}/services/data/v60.0/limits"
 }
